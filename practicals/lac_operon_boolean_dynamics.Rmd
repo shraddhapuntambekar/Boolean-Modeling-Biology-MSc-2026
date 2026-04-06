@@ -1,0 +1,485 @@
+---
+title: "Boolean Network Simulation: Lac Operon Model"
+author: "Shraddha Puntambekar"
+date: "2026-04-04"
+output: html_document
+---
+
+---
+
+# Introduction
+
+This document implements and simulates a Boolean network model of the *Escherichia coli* **lac operon** — one of the most studied gene regulatory systems in molecular biology. The lac operon encodes the enzymes required for lactose metabolism. Its regulation is governed by two environmental signals: the availability of lactose (the preferred alternative carbon source) and glucose (the preferred carbon source). *E. coli* expresses the lac operon only when lactose is present **and** glucose is absent — an efficient strategy for carbon source utilisation.
+
+The Boolean model used here was constructed by **Veliz-Cuba and Stigler (2011)** to reproduce bistability in lac operon expression experimentally observed by Ozbudak et al. (2004). The model is further studied and extended by **Montalva-Medel et al. (2021)**, whose analysis this document follows. We simulate the original model and a modified version without catabolite repression, under six combinations of external lactose and glucose concentrations.
+
+**Key biological question:** Under what environmental conditions does the lac operon switch ON, switch OFF, or exhibit bistability (where either state is possible depending on history)?
+
+**Expected outcomes (Montalva-Medel et al. 2021):**
+
+| Condition | Glucose | Lactose | Expected operon state |
+|-----------|---------|---------|----------------------|
+| (i) | Low | Low | OFF |
+| (ii) | High | Low | OFF |
+| (iii) | Low | Medium | **Bistable** (ON or OFF) |
+| (iv) | High | Medium | OFF |
+| (v) | Low | High | ON |
+| (vi) | High | High | OFF |
+
+**References:**
+
+1. Ozbudak et al. (2004). Multistability in the lactose utilization network of *E. coli*. *Nature* 427, 737–740. [PubMed](https://www.ncbi.nlm.nih.gov/pubmed/14973486)
+2. Veliz-Cuba & Stigler (2011). Boolean models can explain bistability in the lac operon. *J. Computational Biology* 18(6), 783–794. [Link](https://journals.sagepub.com/doi/abs/10.1089/cmb.2011.0031)
+3. Montalva-Medel et al. (2021). Lac operon Boolean models: Dynamical robustness and alternative improvements. *Mathematics* 9(6), 600. [Link](https://www.mdpi.com/2227-7390/9/6/600)
+
+---
+
+# 1. Setup
+
+## 1.1 Required Packages
+
+Load the packages required for Boolean network simulation (`BoolNet`), heatmap visualisation (`pheatmap`), and network graph plotting (`igraph`). Install them first if not already available.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Uncomment to install if needed:
+# install.packages("BoolNet")
+# install.packages("pheatmap")
+# install.packages("igraph")
+
+library(BoolNet)
+library(pheatmap)
+library(igraph)
+```
+
+---
+
+# 2. Model Description
+
+## 2.1 Loading the Published SBML Model
+
+The model is loaded from the corrected SBML file of the Veliz-Cuba & Stigler (2011) lac operon Boolean network, downloaded from the [biodivine Boolean models repository](https://github.com/sybila/biodivine-boolean-models). Place the SBML file in the same folder as this `.Rmd` file and set your working directory accordingly (in RStudio: Session → Set Working Directory → To Source File Location).
+
+Link to the file: https://github.com/sybila/biodivine-boolean-models/blob/main/models/%5Bid-063%5D__%5Bvar-10%5D__%5Bin-3%5D__%5BLAC-OPERON%5D/model.sbml
+You can find the details of the components of the model also at https://research.cellcollective.org/dashboard#module/5128:1/lac-operon/1
+
+```{r load-model}
+lac_operon <- loadSBML("lac-operon-model_corrected.sbml", symbolic = TRUE)
+```
+
+## 2.2 Node Descriptions
+
+The model has **13 nodes** in total — 3 input nodes representing environmental conditions, 7 internal nodes representing intracellular molecular species, and 3 output nodes that together define whether the operon is ON or OFF.
+
+**Input nodes (environmental conditions — fixed during simulation):**
+
+| Node | Description |
+|------|-------------|
+| `v_Ge` | Extracellular glucose (1 = high, 0 = low/absent) |
+| `v_Le` | Extracellular lactose at high concentration |
+| `v_Lem` | Extracellular lactose at medium concentration |
+
+**Internal nodes (intracellular molecular species):**
+
+| Node | Description |
+|------|-------------|
+| `v_A` | Allolactose at high concentration |
+| `v_Am` | Allolactose at medium concentration |
+| `v_C` | cAMP receptor protein (CAP) — activated when glucose is absent |
+| `v_R` | Lac repressor protein at high concentration |
+| `v_Rm` | Lac repressor protein at medium concentration |
+| `v_L` | Intracellular lactose at high concentration |
+| `v_Lm` | Intracellular lactose at medium concentration |
+
+**Output nodes (lac operon phenotype):**
+
+| Node | Description |
+|------|-------------|
+| `v_M` | Lac mRNA (transcription) |
+| `v_P` | Lac permease (lactose import) |
+| `v_B` | β-galactosidase (lactose metabolism) |
+
+> **Operon ON:** `v_M = 1`, `v_P = 1`, `v_B = 1`  
+> **Operon OFF:** `v_M = 0`, `v_P = 0`, `v_B = 0`
+
+## 2.3 Network Visualisation
+
+The wiring diagram shows all regulatory interactions between the 13 nodes. Arrows indicate activation; flat-headed edges indicate inhibition. Note the feedback loop through permease (v_P) and lactose import — this positive feedback is the mechanistic source of bistability.
+
+```{r plot-network}
+plotNetworkWiring(network = lac_operon)
+```
+
+## 2.4 Boolean Update Rules
+
+The Boolean update rules encode the regulatory logic of each node. The key rules are:
+
+- `v_C = !v_Ge` — CAP is active only when glucose is absent (catabolite repression)
+- `v_M = (v_C & !(v_R | v_Rm))` — Operon transcription requires CAP active AND repressor inactive
+- `v_R = !(v_Am | v_A)` — Repressor is active only when allolactose is absent
+
+```{r print-rules}
+print(lac_operon)
+```
+
+---
+
+# 3. Simulations Under Six Environmental Conditions
+
+We simulate the model using **synchronous updating** under six combinations of external lactose (low/medium/high) and glucose (low/high). All internal nodes are initialised to 0 at t=0. The operon state is read from `v_M`, `v_P`, and `v_B` at steady state.
+
+> Note: The input combination (v_Le=1, v_Lem=0) has no biological meaning (high lactose implies medium lactose is also present) and is therefore not tested.
+
+---
+
+## 3.1 Condition (i): Low Lactose, Low Glucose — `v_Le=0, v_Lem=0, v_Ge=0`
+
+With no lactose present, allolactose cannot be produced, the repressor remains active, and the operon cannot be transcribed despite glucose being absent. **Expected: Operon OFF.**
+
+```{r condition-i}
+t0 <- generateState(lac_operon, specs =  c(v_Le = 0 , v_Lem = 0 , v_Ge = 0) ) 
+tf <- 10
+
+tall<-matrix(data=NA, nrow =length(t0) ,ncol = tf)
+startstate = t0
+for (tm in 1:tf){
+  atnextt <- stateTransition(lac_operon,startstate,type = c("synchronous"),timeStep = 1)   
+  tall[,tm]<-t(atnextt)
+  startstate = generateState(lac_operon,specs = atnextt)
+}
+tall = cbind(t0,tall)
+rownames(tall) = lac_operon$genes
+colnames(tall)=c(0:tf)
+
+cat("\nSimulation time series (Condition i):\n")
+print(tall)
+
+pheatmap::pheatmap(tall,
+                   color = c("black","white"),
+                   cluster_rows = FALSE,
+                   cluster_cols = FALSE,
+                   legend_breaks = c(0,1),
+                   legend_labels = c("Off (0)", "On (1)"),
+                    main = "(i) Low lactose, Low glucose"
+                   )
+
+plotSequence(network = lac_operon, startState = t0 )
+```
+
+---
+
+## 3.2 Condition (ii): Low Lactose, High Glucose — `v_Le=0, v_Lem=0, v_Ge=1`
+
+With high glucose, CAP is inactive (catabolite repression). Even if lactose were present, the operon could not be transcribed. With no lactose, the repressor is also active. **Expected: Operon OFF.**
+
+```{r condition-ii}
+
+t0 <- generateState(lac_operon, specs =  c(v_Le = 0 , v_Lem = 0 , v_Ge = 1) ) 
+tf <- 10
+
+tall<-matrix(data=NA, nrow =length(t0) ,ncol = tf)
+startstate = t0
+for (tm in 1:tf){
+  atnextt <- stateTransition(lac_operon,startstate,type = c("synchronous"),timeStep = 1)   
+  tall[,tm]<-t(atnextt)
+  startstate = generateState(lac_operon,specs = atnextt)
+}
+tall = cbind(t0,tall)
+rownames(tall) = lac_operon$genes
+colnames(tall)=c(0:tf)
+
+cat("\nSimulation time series (Condition ii):\n")
+print(tall)
+
+pheatmap::pheatmap(tall,
+                   color = c("black","white"),
+                   cluster_rows = FALSE,
+                   cluster_cols = FALSE,
+                   legend_breaks = c(0,1),
+                   legend_labels = c("Off (0)", "On (1)"),
+                   main = "(ii) Low lactose, High glucose"
+                   )
+
+plotSequence(network = lac_operon, startState = t0 )
+```
+
+## 3.3 Condition (iii): Medium Lactose, Low Glucose — `v_Le=0, v_Lem=1, v_Ge=0`
+
+This is the bistable condition. At medium lactose, the system can settle into either the ON or OFF state depending on the initial internal state of the cell. Starting from all-zero internal nodes, the simulation finds one fixed point (Operon OFF). An exhaustive search in Section 4.2 reveals the second fixed point (Operon ON) and the basin sizes for each. **Expected: Bistability.**
+
+```{r condition-iii}
+t0 <- generateState(lac_operon, specs =  c(v_Le = 0 , v_Lem = 1 , v_Ge = 0) ) 
+tf <- 10
+
+tall<-matrix(data=NA, nrow =length(t0) ,ncol = tf)
+startstate = t0
+for (tm in 1:tf){
+  atnextt <- stateTransition(lac_operon,startstate,type = c("synchronous"),timeStep = 1)   
+  tall[,tm]<-t(atnextt)
+  startstate = generateState(lac_operon,specs = atnextt)
+}
+tall = cbind(t0,tall)
+rownames(tall) = lac_operon$genes
+colnames(tall)=c(0:tf)
+
+cat("\nSimulation time series (Condition iii):\n")
+print(tall)
+
+pheatmap::pheatmap(tall,
+                   color = c("black","white"),
+                   cluster_rows = FALSE,
+                   cluster_cols = FALSE,
+                   legend_breaks = c(0,1),
+                   legend_labels = c("Off (0)", "On (1)"),
+                   main = "(iii) Medium lactose, Low glucose"
+                   )
+
+plotSequence(network = lac_operon, startState = t0 )
+```
+
+---
+
+## 3.4 Condition (iv): Medium Lactose, High Glucose — `v_Le=0, v_Lem=1, v_Ge=1`
+
+Even though medium lactose is present, high glucose suppresses CAP activity. Without CAP, the operon cannot be transcribed regardless of the repressor state. **Expected: Operon OFF.**
+
+```{r condition-iv}
+t0 <- generateState(lac_operon, specs =  c(v_Le = 0 , v_Lem = 1 , v_Ge = 1) ) 
+tf <- 10
+
+tall<-matrix(data=NA, nrow =length(t0) ,ncol = tf)
+startstate = t0
+for (tm in 1:tf){
+  atnextt <- stateTransition(lac_operon,startstate,type = c("synchronous"),timeStep = 1)   
+  tall[,tm]<-t(atnextt)
+  startstate = generateState(lac_operon,specs = atnextt)
+}
+tall = cbind(t0,tall)
+rownames(tall) = lac_operon$genes
+colnames(tall)=c(0:tf)
+
+cat("\nSimulation time series (Condition iv):\n")
+print(tall)
+
+pheatmap::pheatmap(tall,
+                   color = c("black","white"),
+                   cluster_rows = FALSE,
+                   cluster_cols = FALSE,
+                   legend_breaks = c(0,1),
+                   legend_labels = c("Off (0)", "On (1)"),
+                   main = "(iv) Medium lactose, High glucose"
+                   )
+
+plotSequence(network = lac_operon, startState = t0 )
+
+```
+
+---
+
+## 3.5 Condition (v): High Lactose, Low Glucose — `v_Le=1, v_Lem=1, v_Ge=0`
+
+This is the fully permissive condition: glucose is absent (CAP is active) and lactose is abundant (allolactose inactivates the repressor). Both conditions required for operon transcription are satisfied. **Expected: Operon ON.**
+
+```{r condition-v}
+
+t0 <- generateState(lac_operon, specs =  c(v_Le = 1 , v_Lem = 1 , v_Ge = 0) ) 
+tf <- 20
+
+tall<-matrix(data=NA, nrow =length(t0) ,ncol = tf)
+startstate = t0
+for (tm in 1:tf){
+  atnextt <- stateTransition(lac_operon,startstate,type = c("synchronous"),timeStep = 1)   
+  tall[,tm]<-t(atnextt)
+  startstate = generateState(lac_operon,specs = atnextt)
+}
+tall = cbind(t0,tall)
+rownames(tall) = lac_operon$genes
+colnames(tall)=c(0:tf)
+
+cat("\nSimulation time series (Condition v):\n")
+print(tall)
+
+pheatmap::pheatmap(tall,
+                   color = c("black","white"),
+                   cluster_rows = FALSE,
+                   cluster_cols = FALSE,
+                   legend_breaks = c(0,1),
+                   legend_labels = c("Off (0)", "On (1)"),
+                  main = "(v) High lactose, Low glucose"
+                   )
+
+plotSequence(network = lac_operon, startState = t0 )
+```
+
+---
+
+## 3.6 Condition (vi): High Lactose, High Glucose — `v_Le=1, v_Lem=1, v_Ge=1`
+
+Despite abundant lactose, high glucose suppresses CAP. This reflects catabolite repression — *E. coli* preferentially uses glucose and actively suppresses lactose metabolism when glucose is available. **Expected: Operon OFF.**
+
+```{r condition-vi}
+
+t0 <- generateState(lac_operon, specs =  c(v_Le = 1 , v_Lem = 1 , v_Ge = 1) ) 
+tf <- 10
+
+tall<-matrix(data=NA, nrow =length(t0) ,ncol = tf)
+startstate = t0
+for (tm in 1:tf){
+  atnextt <- stateTransition(lac_operon,startstate,type = c("synchronous"),timeStep = 1)   
+  tall[,tm]<-t(atnextt)
+  startstate = generateState(lac_operon,specs = atnextt)
+}
+tall = cbind(t0,tall)
+rownames(tall) = lac_operon$genes
+colnames(tall)=c(0:tf)
+
+cat("\nSimulation time series (Condition vi):\n")
+print(tall)
+
+pheatmap::pheatmap(tall,
+                   color = c("black","white"),
+                   cluster_rows = FALSE,
+                   cluster_cols = FALSE,
+                   legend_breaks = c(0,1),
+                   legend_labels = c("Off (0)", "On (1)"),
+                   main = "(vi) High lactose, High glucose"
+                   )
+
+plotSequence(network = lac_operon, startState = t0 )
+
+```
+
+---
+
+# 4. Attractor Analysis
+
+## 4.1 Computing All Attractors
+
+`getAttractors()` performs an exhaustive search over all 2^13 = 8192 possible states and identifies every fixed point and limit cycle in the network. The resulting attractor object is used for all subsequent analyses.
+
+```{r find-attractors}
+attr <- getAttractors(lac_operon,type = "synchronous")
+attr
+```
+
+## 4.2 Bistability Analysis — Condition (iii)
+
+Condition (iii) (medium lactose, low glucose) is expected to exhibit bistability — two co-existing stable fixed points. To find both attractors and their basin sizes, we fix the input nodes at their condition (iii) values and perform an exhaustive search over all remaining internal states. This reveals the full set of initial conditions that lead to Operon ON versus Operon OFF.
+
+## Get attractors for condition 3 with number of basin of states for each
+```{r bistability-condition-iii}
+# Fix input nodes to condition (iii) values and search exhaustively
+
+cond3_net <- fixGenes(lac_operon,
+                      fixIndices = c("v_Le", "v_Lem", "v_Ge"),
+                      values = c(0, 1, 0))
+
+attr_3s <- simulateSymbolicModel(cond3_net,method="exhaustive")
+
+cat("\n********* \n Observed bistability for condition (iii) — Operon is either OFF or ON:\n********* \n")
+print(attr_3s)
+
+cat("\n********* \n All initial conditions that lead to Operon ON (basin of attractor 2):\n********* \n")
+getBasinOfAttraction(attr_3s,2)
+
+```
+
+-----
+
+To verify bistability, you can re-run the simulation from Section 3.3 (Condition iii: medium lactose, low glucose) using any initial state from the ON basin identified above — rather than the all-zero starting state used earlier. Starting from such an initial condition, the system should now converge to the Operon ON fixed point, confirming that both stable states are genuinely reachable under the same environmental inputs
+
+-------
+
+
+## 4.3 Attractor Visualisation
+
+The attractor plot shows the ON/OFF state of all 13 nodes at each fixed point. Each attractor column corresponds to one stable phenotype of the network.
+
+```{r plot-attractors}
+plotAttractors(attr)
+```
+
+## 4.4 State Transition Graph
+
+The state graph visualises all 8192 states and the transitions between them. States converging to the same attractor form a basin — visually appearing as a funnel leading to the attractor state.
+
+```{r state-graph}
+plotStateGraph(attr)
+```
+
+## 4.5 Attractor Sequence and Basin of Attraction (Full Network)
+
+For the full network (all inputs free), the attractor sequence and basin are computed for attractor 1.
+
+```{r attractor-sequence}
+getAttractorSequence(attr, 1)
+```
+
+```{r basin-of-attraction}
+getBasinOfAttraction(attr, 1)
+```
+
+## 4.6 State Summary
+
+Given the last simulated initial condition (`t0`), reports which attractor it reaches and the length of the transient path before reaching the attractor.
+
+```{r state-summary}
+getStateSummary(attr, t0)
+```
+
+------
+
+```{r }
+simulateSymbolicModel(lac_operon,method="exhaustive")
+```
+
+Total possible states = 2^13 = 8192 states.
+
+```{r}
+#getTransitionTable(attr)
+
+```
+
+--------
+
+# 5. Model Extension: Removing Catabolite Repression
+
+In the original 2011 model, the update rule for CAP is `v_C = !v_Ge` — CAP is active only when glucose is absent. Montalva-Medel et al. (2021, Section 3.1) study the effect of removing this catabolite repression by setting `v_C = 1` (CAP is constitutively active regardless of glucose). This modification tests whether catabolite repression is essential for the observed input-output behaviour, particularly the glucose-mediated suppression seen in conditions (ii), (iv), and (vi).
+
+## 5.1 Building the Modified Networks
+
+For each of the six conditions, we fix both the input nodes and set v_C = 1, then perform an exhaustive attractor search.
+
+```{r no-catabolite-repression}
+# Build one network per condition with v_C fixed to 1 (no catabolite repression)
+cond1_upnet_Llac_Lglu <- fixGenes(lac_operon, fixIndices = c("v_Le", "v_Lem", "v_Ge", "v_C"), values = c(0, 0, 0, 1))
+cond2_upnet_Llac_Hglu <- fixGenes(lac_operon, fixIndices = c("v_Le", "v_Lem", "v_Ge", "v_C"), values = c(0, 0, 1, 1))
+cond3_upnet_Mlac_Lglu <- fixGenes(lac_operon, fixIndices = c("v_Le", "v_Lem", "v_Ge", "v_C"), values = c(0, 1, 0, 1))
+cond4_upnet_Mlac_Hglu <- fixGenes(lac_operon, fixIndices = c("v_Le", "v_Lem", "v_Ge", "v_C"), values = c(0, 1, 1, 1))
+cond5_upnet_Hlac_Lglu <- fixGenes(lac_operon, fixIndices = c("v_Le", "v_Lem", "v_Ge", "v_C"), values = c(1, 1, 0, 1))
+cond6_upnet_Hlac_Hglu <- fixGenes(lac_operon, fixIndices = c("v_Le", "v_Lem", "v_Ge", "v_C"), values = c(1, 1, 1, 1))
+
+attr_cond1_upnet_Llac_Lglu <- simulateSymbolicModel(cond1_upnet_Llac_Lglu,method="exhaustive")
+cat("\n********* \n Attractors for condition (i) — no catabolite repression:\n********* \n"); print(attr_cond1_upnet_Llac_Lglu)
+
+attr_cond2_upnet_Llac_Hglu <- simulateSymbolicModel(cond2_upnet_Llac_Hglu,method="exhaustive")
+cat("\n********* \nAttractors for condition (ii) — no catabolite repression:\n********* \n"); print(attr_cond2_upnet_Llac_Hglu)
+
+attr_cond3_upnet_Mlac_Lglu <- simulateSymbolicModel(cond3_upnet_Mlac_Lglu ,method="exhaustive")
+cat("\n********* \nAttractors for condition (iii) — no catabolite repression:\n********* \n"); print(attr_cond3_upnet_Mlac_Lglu)
+
+attr_cond4_upnet_Mlac_Hglu <- simulateSymbolicModel(cond4_upnet_Mlac_Hglu ,method="exhaustive")
+cat("\n********* \nAttractors for condition (iv) — no catabolite repression:\n********* \n"); print(attr_cond4_upnet_Mlac_Hglu)
+
+attr_cond5_upnet_Hlac_Lglu <- simulateSymbolicModel(cond5_upnet_Hlac_Lglu ,method="exhaustive")
+cat("\n********* \nAttractors for condition (v) — no catabolite repression:\n********* \n"); print(attr_cond5_upnet_Hlac_Lglu)
+
+attr_cond6_upnet_Hlac_Hglu <- simulateSymbolicModel(cond6_upnet_Hlac_Hglu ,method="exhaustive")
+cat("\n********* \nAttractors for condition (vi) — no catabolite repression:\n********* \n"); print(attr_cond6_upnet_Hlac_Hglu)
+
+```
+
+
+
+

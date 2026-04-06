@@ -1,0 +1,303 @@
+---
+title: "Boolean Network Simulation: Toggle-Switch Demo"
+author: "Shraddha Puntambekar"
+date: "2026-04-03"
+output: html_document
+---
+
+---
+
+# Introduction
+
+This document demonstrates Boolean network simulation using the **BoolNet** package in R. We model a simple 5-node toggle-switch circuit — a fundamental regulatory motif found in immune cell fate decisions, cancer biology, and synthetic gene circuits. The network consists of two fixed input nodes (Sg and Cn) and three dynamic nodes (A, B, C) that evolve over discrete time steps according to Boolean logic rules.
+
+**Biological motivation:** Nodes A and B form a mutual inhibition (toggle switch) motif, where A inhibits B and B inhibits A. This double-negative feedback is the hallmark of bistable cell fate switches, such as the Th1/Th2 immune decision studied by Garg et al. (2008). Node C acts as a reporter that is active whenever either A or B is ON.
+
+---
+
+# 1. Setup
+
+## 1.1 Required Packages
+
+Load the packages required for network simulation (`BoolNet`) and heatmap visualisation (`pheatmap`). Install them first if not already available.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Uncomment to install if needed:
+# install.packages("BoolNet")
+# install.packages("pheatmap")
+
+library(BoolNet)
+library(pheatmap)
+```
+
+# 2. Network Definition
+
+## 2.1 Boolean Update Rules
+
+The network has 5 nodes. Sg and Cn are fixed input nodes (they do not change over time). A, B, and C are dynamic nodes updated at every time step according to the following Boolean rules:
+
+- **A\*** = Sg OR NOT B — A is activated by Signal (Sg) and inhibited by B  
+- **B\*** = Cn AND NOT A — B requires Condition (Cn) and is inhibited by A  
+- **C\*** = A OR B — C is a reporter; ON if either A or B is active  
+- **Sg\*** = Sg (fixed input — represents a growth factor or external signal)  
+- **Cn\*** = Cn (fixed input — represents a nutrient or environmental condition)
+
+```{r define-network}
+net <- loadNetwork(textConnection(
+  "targets, factors
+   Sg,      Sg
+   Cn,      Cn
+   A,       Sg | !B
+   B,       Cn & !A
+   C,       A | B"
+))
+
+print(net)
+```
+
+## 2.2 Network Wiring Diagram
+
+The wiring diagram shows directed edges between nodes: arrows represent activation and flat-headed edges represent inhibition. The mutual inhibition between A and B is the defining feature of the toggle switch.
+
+```{r plot-network}
+plotNetworkWiring(network = net)
+```
+
+---
+
+# 3. Simulation Under Different Initial Conditions
+
+The network is simulated using **synchronous updating** — all nodes are updated simultaneously at each time step. We test four biologically distinct input combinations (Sg=1/0, Cn=1/0), keeping the dynamic nodes (A, B, C) initialised to 0 at t=0. The simulation runs for `tf` time steps or until the system reaches a steady state.
+
+**Summary of initial conditions tested:**
+
+| Condition | Sg | Cn | Biological interpretation |
+|-----------|----|----|--------------------------|
+| 1 | 1 | 1 | Both signal and nutrient present |
+| 2 | 0 | 0 | Neither signal nor nutrient |
+| 3 | 1 | 0 | Signal present, no nutrient |
+| 4 | 0 | 1 | Nutrient present, no signal |
+
+## 3.1 Condition 1: Sg = 1, Cn = 1 (Both inputs active)
+
+When both the signal and nutrient are present, both A and B receive activating inputs. Because A and B mutually inhibit each other, only one can be stably ON — the initial state (A=0, B=0) determines which wins.
+
+```{r condition-1-simulate}
+t0 <- generateState(net, specs = c(Sg = 1, Cn = 1, A = 0, B = 0, C = 0)) 
+tf <- 10
+
+tall<-matrix(data=NA, nrow =length(t0) ,ncol = tf)
+startstate = t0
+for (tm in 1:tf){
+  atnextt <- stateTransition(net,startstate,type = c("synchronous"),timeStep = 1)   
+  tall[,tm]<-t(atnextt)
+  startstate = generateState(net,specs = atnextt)
+  #print(startstate)
+}
+tall = cbind(t0,tall)
+rownames(tall) = net$genes
+colnames(tall)=c(0:tf)
+
+cat("\nSimulation time series:\n")
+print(tall)
+```
+
+The heatmap below shows the ON/OFF state of each node across time steps. White = ON (1), Black = OFF (0).
+
+```{r condition-1-heatmap}
+pheatmap::pheatmap(tall,
+                   color = c("black","white"),
+                   cluster_rows = FALSE,
+                   cluster_cols = FALSE,
+                   legend_breaks = c(0,1),
+                   legend_labels = c("Off (0)", "On (1)"),
+                   main = "Condition 1: Sg=1, Cn=1"
+                   )
+```
+
+
+The state transition sequence shows the path from the initial state to the attractor.
+
+```{r condition-1-sequence}
+plotSequence(network = net, startState = t0 )
+```
+
+---
+
+## 3.2 Condition 2: Sg = 0, Cn = 0 (Both inputs inactive)
+
+When neither signal nor nutrient is present, A has no activating input (Sg=0) and B also has no activating input (Cn=0). The system converges to an all-OFF fixed point.
+
+```{r condition-2-simulate}
+
+t0 <- generateState(net, specs = c(Sg = 0, Cn = 0, A = 0, B = 0, C = 0)) 
+tf <- 50
+
+tall<-matrix(data=NA, nrow =length(t0) ,ncol = tf)
+startstate = t0
+for (tm in 1:tf){
+  atnextt <- stateTransition(net,startstate,type = c("synchronous"),timeStep = 1)   
+  tall[,tm]<-t(atnextt)
+  startstate = generateState(net,specs = atnextt)
+}
+tall = cbind(t0,tall)
+rownames(tall) = net$genes
+colnames(tall)=c(0:tf)
+
+cat("\nSimulation time series:\n")
+print(tall)
+
+pheatmap::pheatmap(tall,
+                   color = c("black","white"),
+                   cluster_rows = FALSE,
+                   cluster_cols = FALSE,
+                   legend_breaks = c(0,1),
+                   legend_labels = c("Off (0)", "On (1)"),
+                   main = "Condition 2: Sg=0, Cn=0"
+                   )
+
+plotSequence(network = net, startState = t0 )
+
+```
+
+---
+
+## 3.3 Condition 3: Sg = 1, Cn = 0 (Signal only)
+
+With only the signal active, A receives activation from Sg. Since Cn=0, B has no activating input and is suppressed by A. The toggle switch tips in favour of A.
+
+```{r condition-3-simulate}
+
+t0 <- generateState(net, specs = c(Sg = 1, Cn = 0, A = 0, B = 0, C = 0)) 
+tf <- 10
+
+tall<-matrix(data=NA, nrow =length(t0) ,ncol = tf)
+startstate = t0
+for (tm in 1:tf){
+  atnextt <- stateTransition(net,startstate,type = c("synchronous"),timeStep = 1)   
+  tall[,tm]<-t(atnextt)
+  startstate = generateState(net,specs = atnextt)
+}
+tall = cbind(t0,tall)
+rownames(tall) = net$genes
+colnames(tall)=c(0:tf)
+
+cat("\nSimulation time series:\n")
+print(tall)
+
+pheatmap::pheatmap(tall,
+                   color = c("black","white"),
+                   cluster_rows = FALSE,
+                   cluster_cols = FALSE,
+                   legend_breaks = c(0,1),
+                   legend_labels = c("Off (0)", "On (1)"),
+                   main = "Condition 3: Sg=1, Cn=0"
+                   )
+
+plotSequence(network = net, startState = t0 )
+
+```
+
+---
+
+## 3.4 Condition 4: Sg = 0, Cn = 1 (Nutrient only)
+
+With only the nutrient condition active, B receives activation from Cn. Since Sg=0, A has no activating input and is suppressed by B. The toggle switch tips in favour of B.
+
+```{r condition-4-simulate}
+
+t0 <- generateState(net, specs = c(Sg = 0, Cn = 1, A = 0, B = 0, C = 0)) 
+tf <- 20
+
+tall<-matrix(data=NA, nrow =length(t0) ,ncol = tf)
+startstate = t0
+for (tm in 1:tf){
+  atnextt <- stateTransition(net,startstate,type = c("synchronous"),timeStep = 1)   
+  tall[,tm]<-t(atnextt)
+  startstate = generateState(net,specs = atnextt)
+}
+tall = cbind(t0,tall)
+rownames(tall) = net$genes
+colnames(tall)=c(0:tf)
+
+cat("\nSimulation time series:\n")
+print(tall)
+
+pheatmap::pheatmap(tall,
+                   color = c("black","white"),
+                   cluster_rows = FALSE,
+                   cluster_cols = FALSE,
+                   legend_breaks = c(0,1),
+                   legend_labels = c("Off (0)", "On (1)"),
+                   main = "Condition 4: Sg=0, Cn=1"
+                   )
+
+plotSequence(network = net, startState = t0 )
+
+```
+
+---
+
+# 4. Attractor Analysis
+
+Attractors are the long-term stable states that the network inevitably reaches regardless of starting conditions. For a 5-node network, there are 2^5 = 32 possible states in total. We now compute all attractors exhaustively and analyse their properties.
+
+## 4.1 Finding All Attractors
+
+`getAttractors()` enumerates all fixed points and limit cycles reachable in the network by exhaustive search over the full state space.
+
+```{r find-attractors}
+attr <- getAttractors(net)
+print(attr)
+```
+
+## 4.2 Attractor Visualisation
+
+The attractor plot shows the node activity pattern at each fixed point or within each limit cycle. Each column is a node
+
+```{r plot-attractors}
+plotAttractors(attr) 
+plotAttractors(attr,mode="graph")
+```
+
+## 4.3 Full State Transition Table
+
+The transition table shows every possible state (all 32 binary vectors) and the single state each maps to under synchronous updating. States that map to themselves are fixed-point attractors.
+
+```{r transition-table}
+getTransitionTable(attr)
+```
+
+## 4.4 State Transition Graph
+
+The state graph visualises the entire state space as a directed graph. Each node is one of the 32 possible states; arrows show how states transition. Attractor states appear as self-loops or closed cycles; all other states flow toward an attractor.
+
+```{r state-graph}
+plotStateGraph(attr)
+```
+
+## 4.5 Attractor Sequence and Basin of Attraction
+
+The attractor sequence lists the states that make up each attractor. The basin of attraction is the set of all initial states that eventually flow into a given attractor — a larger basin indicates a more robust or probable phenotype.
+
+```{r attractor-sequence}
+# Attractor sequence: states visited within the attractor
+getAttractorSequence(attr,1)
+```
+```{r basin-of-attraction}
+# Basin of attraction: all initial states that lead to attractor 1
+getBasinOfAttraction(attr,1)
+```
+
+## 4.6 State Summary for a Given Initial Condition
+
+Given a specific starting state, `getStateSummary()` reports which attractor it reaches and the transient path length. This is useful for checking individual simulation results against the full attractor landscape.
+
+```{r state-summary}
+getStateSummary(attr,t0)
+```
+
+
+
