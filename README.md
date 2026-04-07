@@ -25,14 +25,3 @@ MathModeling-Biology-MSc-2026/
 ```
 
 ---
-
-## How to Download This Repository
-
-**Option 1 — Download as ZIP** (simplest):  
-Click the green **Code** button at the top of this page → **Download ZIP**
-
-**Option 2 — Clone with git:**
-```bash
-git clone https://github.com/shraddhapuntambekar/MathModeling-Biology-MSc-2026.git
-```
-
