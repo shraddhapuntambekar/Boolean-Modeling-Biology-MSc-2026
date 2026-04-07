@@ -33,6 +33,6 @@ Click the green **Code** button at the top of this page → **Download ZIP**
 
 **Option 2 — Clone with git:**
 ```bash
-git clone https://github.com/<your-username>/MathModeling-Biology-MSc-2026.git
+git clone https://github.com/shraddhapuntambekar/MathModeling-Biology-MSc-2026.git
 ```
 
