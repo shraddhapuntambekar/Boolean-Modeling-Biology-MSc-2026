@@ -17,11 +17,11 @@ These are the primary research papers directly relevant to the lecture and pract
 
 3. **Veliz-Cuba & Stigler (2011)** — Boolean models can explain bistability in the lac operon. *Journal of Computational Biology* 18(6), 783–794.
 [Link](https://journals.sagepub.com/doi/abs/10.1089/cmb.2011.0031)
-> The original Boolean model of the *E. coli* lac operon used in `lac_operon_boolean_dynamics.Rmd`. Read this to understand the network structure and update rules before running the practical.
+> The original Boolean model of the *E. coli* lac operon used in `practicals/lac_operon_boolean_dynamics.Rmd`. Read this to understand the network structure and update rules before running the practical.
 
 4. **Montalva-Medel, Ledger, Ruz & Goles (2021)** — Lac operon Boolean models: Dynamical robustness and alternative improvements. *Mathematics* 9(6), 600.
 [Link](https://www.mdpi.com/2227-7390/9/6/600)
-> Extends and refines the Veliz-Cuba & Stigler model. **Required reading for the practical exam** — the Improved Original Model (Figure 9) and Improved Reduced Model (Figure 10) that students implement are described here. Table 6 is the target for result reproduction.
+> Extends and refines the Veliz-Cuba & Stigler model. **Required reading to solve the assignment given in `practicals/Assignment_boolean_modeling.pdf`** — the Improved Original Model (Figure 9) and Improved Reduced Model (Figure 10) that students implement are described here. Table 6 is the target for result reproduction.
 
 5. **Ozbudak et al. (2004)** — Multistability in the lactose utilization network of *Escherichia coli*. *Nature* 427, 737–740.
 [PubMed](https://www.ncbi.nlm.nih.gov/pubmed/14973486)
